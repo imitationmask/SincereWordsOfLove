@@ -48,6 +48,16 @@ const SYSTEM_PROMPT = `你是「爱的真心话」助手。用户会输入父母
 3. 语气柔和、体谅孩子，不啰嗦、不说教堆砌。
 4. 不要出现「AI」「模型」「作为助手」等套话。`;
 
+function chatPayload(messages, { stream }) {
+  return {
+    model: MODEL,
+    temperature: 0.6,
+    max_tokens: 256,
+    stream,
+    messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
+  };
+}
+
 async function proxyChat(messages) {
   const url = `${BASE_URL.replace(/\/$/, "")}/chat/completions`;
   const r = await fetch(url, {
@@ -56,11 +66,7 @@ async function proxyChat(messages) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${API_KEY}`,
     },
-    body: JSON.stringify({
-      model: MODEL,
-      temperature: 0.6,
-      messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
-    }),
+    body: JSON.stringify(chatPayload(messages, { stream: false })),
   });
   const text = await r.text();
   if (!r.ok) {
@@ -72,6 +78,56 @@ async function proxyChat(messages) {
   const content = data?.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty model response");
   return String(content).trim();
+}
+
+/** 将 DashScope 的 SSE 流原样写给客户端；客户端断开时取消上游读取 */
+async function proxyChatStream(messages, req, res) {
+  const url = `${BASE_URL.replace(/\/$/, "")}/chat/completions`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${API_KEY}`,
+    },
+    body: JSON.stringify(chatPayload(messages, { stream: true })),
+  });
+
+  if (!r.ok) {
+    const text = await r.text();
+    const err = new Error(`DashScope HTTP ${r.status}`);
+    err.detail = text;
+    throw err;
+  }
+
+  if (!r.body) {
+    throw new Error("DashScope 未返回可读流");
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  const reader = r.body.getReader();
+  let clientGone = false;
+  req.on("close", () => {
+    clientGone = true;
+    reader.cancel().catch(() => {});
+  });
+
+  try {
+    while (!clientGone) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength) {
+        res.write(Buffer.from(value));
+      }
+    }
+  } finally {
+    res.end();
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -117,6 +173,25 @@ const server = http.createServer(async (req, res) => {
             "Access-Control-Allow-Origin": "*",
           }
         );
+        return;
+      }
+
+      if (body.stream === true) {
+        try {
+          await proxyChatStream(messages, req, res);
+        } catch (e) {
+          if (res.headersSent) return;
+          const detail = e?.detail || e?.message || String(e);
+          send(
+            res,
+            502,
+            JSON.stringify({ error: "调用通义千问失败", detail }),
+            {
+              "Content-Type": "application/json; charset=utf-8",
+              "Access-Control-Allow-Origin": "*",
+            }
+          );
+        }
         return;
       }
 
