@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>爱的真心话 · 通义千问</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;600&family=ZCOOL+XiaoWei&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true"></div>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">通义千问 · 亲子沟通</p>
+        <h1>爱的真心话</h1>
+        <p class="lede">
+          输入父母对孩子说的话，AI
+          会以父母内心的角度，用柔和、简短的语句（50
+          字以内）说出那份没说出口的在乎。
+        </p>
+      </header>
+
+      <section class="chat" aria-label="对话">
+        <div id="log" class="log" role="log" aria-live="polite"></div>
+        <form id="form" class="composer">
+          <label class="sr-only" for="input">父母说的话</label>
+          <textarea
+            id="input"
+            rows="3"
+            maxlength="500"
+            placeholder="例如：又玩手机，作业写完了吗？"
+            required
+          ></textarea>
+          <div class="row">
+            <button type="submit" id="send">生成真心话</button>
+            <button type="button" id="clear" class="ghost">清空对话</button>
+          </div>
+        </form>
+      </section>
+
+      <footer class="foot">
+        <p>
+          本地运行：在项目根目录
+          <code>.env</code> 中填写
+          <code>DASHSCOPE_API_KEY</code>，执行
+          <code>npm install</code> 与
+          <code>npm start</code>。也可用环境变量覆盖；国际区可配置
+          <code>DASHSCOPE_BASE_URL</code>。
+        </p>
+      </footer>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
