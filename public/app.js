@@ -19,6 +19,11 @@ let asrCtx = null;
 /** @type {ScriptProcessorNode | null} */
 let asrProcessor = null;
 
+/** 用户点击结束语音时置位，避免 onclose 误报「连接失败」 */
+let asrUserInitiatedStop = false;
+/** 已收到服务端 done 或 error(JSON) 时置位 */
+let asrSessionClean = false;
+
 let voiceBase = "";
 let voiceFinal = "";
 /** 当前未句末的实时片段 */
@@ -90,6 +95,7 @@ function finalizeAsrSession() {
 /** 结束识别：停止采集；关闭 WebSocket 后由服务端转发 finish-task */
 function stopVoiceRecognition() {
   if (!isRecognizing && !asrWs) return;
+  asrUserInitiatedStop = true;
   teardownAsrAudio();
   if (asrWs && asrWs.readyState === WebSocket.OPEN) {
     try {
@@ -167,6 +173,8 @@ function initDashScopeAsrMic() {
     voiceBase = input.value.slice(0, MAX_INPUT_LEN);
     voiceFinal = "";
     voicePartial = "";
+    asrUserInitiatedStop = false;
+    asrSessionClean = false;
     isRecognizing = true;
     setMicListeningUi(true);
     syncComposerButtons();
@@ -196,23 +204,36 @@ function initDashScopeAsrMic() {
         return;
       }
       if (msg.type === "done") {
+        asrSessionClean = true;
         finalizeAsrSession();
         return;
       }
       if (msg.type === "error") {
+        asrSessionClean = true;
         errorLine(msg.message || "语音识别失败，请改用键盘输入。");
         finalizeAsrSession();
       }
     };
 
-    ws.onerror = () => {
-      errorLine("语音连接异常，请稍后重试或改用键盘输入。");
-      finalizeAsrSession();
-    };
+    /** 浏览器几乎不提供错误详情，以 onclose 的 code / reason 为准 */
+    ws.onerror = () => {};
 
-    ws.onclose = () => {
-      if (asrWs === ws) {
-        finalizeAsrSession();
+    ws.onclose = (ev) => {
+      if (asrWs !== ws) return;
+      const shouldHint =
+        !asrSessionClean &&
+        !asrUserInitiatedStop &&
+        ev.code !== 1000 &&
+        ev.code !== 1001;
+      finalizeAsrSession();
+      if (shouldHint) {
+        const extra =
+          ev.code === 1006 || ev.code === 1015
+            ? " 生产环境常见原因：Nginx（或其它反代）未正确转发 WebSocket，需在配置中设置 Upgrade、Connection（示例见项目 docs/deploy-troubleshooting.md 第 9 节）。使用 Cloudflare 等 CDN 时需在控制台开启 WebSocket。"
+            : "";
+        errorLine(
+          `语音连接失败（关闭码 ${ev.code}${ev.reason ? `：${ev.reason}` : ""}）。${extra} 可改用键盘输入。`
+        );
       }
     };
   });

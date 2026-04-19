@@ -340,6 +340,14 @@ function attachDashScopeAsrBridge(browserWs) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
+  /**
+   * WebSocket 握手会先触发 `request`，再触发 `upgrade`。
+   * 若在此处按静态资源处理 /api/asr/stream，会先发 404，握手失败（wscat / 浏览器均报 Unexpected 404）。
+   */
+  if (String(req.headers.upgrade || "").toLowerCase() === "websocket") {
+    return;
+  }
+
   if (req.method === "OPTIONS" && url.pathname === "/api/chat") {
     send(res, 204, "", {
       "Access-Control-Allow-Origin": "*",

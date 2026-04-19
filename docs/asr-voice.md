@@ -48,6 +48,7 @@ flowchart LR
 
 ## 服务端要点（`server.mjs`）
 
+- Node 对带 **`Upgrade: websocket`** 的请求会**先**进入普通 **`request`** 回调，再触发 **`upgrade`**。若在 `request` 里把 `/api/asr/stream` 当成静态文件返回 **404**，WebSocket 握手会失败；因此 `request` 开头对 WebSocket 请求直接 **`return`**，由 **`upgrade`** 与 **`ws`** 完成握手（见 `server.mjs` 内注释）。
 - 使用 **`ws`** 库：`HTTP` 服务器的 **`upgrade`** 事件仅对路径 **`/api/asr/stream`** 升级为 WebSocket，回调 **`attachDashScopeAsrBridge`**。
 - 对每个浏览器连接：再建立一条到 **`DASHSCOPE_ASR_WSS`** 的 WebSocket，请求头 **`Authorization: bearer <DASHSCOPE_API_KEY>`**。
 - 向百炼发送 **`run-task`**（`payload.model` = `DASHSCOPE_ASR_MODEL`，`parameters.format` = `pcm`，`sample_rate` = `16000`）。
@@ -86,7 +87,8 @@ proxy_read_timeout 3600s;
 | 现象 | 可能原因 | 处理 |
 |------|----------|------|
 | 语音按钮报错「服务器未配置 DASHSCOPE_API_KEY」 | 服务端未加载 Key | 配置 `.env` 或环境变量后重启进程 |
-| 连接立即失败 | `ws` 依赖未安装、或端口/反代未放行 WebSocket | `npm install`；检查 Nginx `Upgrade` 头 |
+| 提示「语音连接失败」、关闭码 **1006** | **Nginx/CDN 未转发 WebSocket**（最常见） | 在反代中配置 `Upgrade`、`Connection` 与 `map $http_upgrade $connection_upgrade`；见 **`docs/deploy-troubleshooting.md` 第 9 节** |
+| 连接立即失败 | `ws` 依赖未安装、或端口/反代未放行 WebSocket | `npm install`；检查 Nginx 与 CDN 是否允许 WebSocket |
 | 无识别结果 | 麦克风未授权、采样错误、模型与地域不匹配 | 浏览器允许麦克风；核对 `DASHSCOPE_ASR_WSS` 与 Key 地域 |
 | 仅本地可用、公网不可用 | 未使用 HTTPS | 为站点配置 TLS，使用 **`wss://`** 访问 |
 

@@ -140,18 +140,46 @@ systemctl reset-failed sincere-words.service
 
 ## 9. 语音输入与 WebSocket（Nginx 反代）
 
-本项目语音经浏览器 **`WebSocket`** 访问同源路径 **`/api/asr/stream`**，由 Node **`upgrade`** 转发至百炼实时识别。若仅配置了普通 HTTP 反代、未透传升级头，会出现语音连接失败或立即断开。
+本项目语音经浏览器 **`WebSocket`** 访问同源路径 **`/api/asr/stream`**，由 Node **`upgrade`** 转发至百炼实时识别。若仅配置了普通 HTTP 反代、未透传升级头，浏览器侧常见 **`关闭码 1006`**（异常断开），页面会提示语音连接失败。
 
-**建议在反代 Node 的 `location` 中增加**（可与现有 `proxy_pass` 并存）：
+### 9.1 必配指令（与 `proxy_pass` 写在同一 `location` 或 `server` 内）
 
 ```nginx
 proxy_http_version 1.1;
 proxy_set_header Upgrade $http_upgrade;
-proxy_set_header Connection "upgrade";
+proxy_set_header Connection $connection_upgrade;
 proxy_read_timeout 3600s;
 ```
 
-公网使用语音需 **HTTPS**（页面以 **`https://`** 打开），浏览器才会稳定允许麦克风，且 WebSocket 为 **`wss://`**。
+并在 **`http { }` 块内**（与 `server` 平级）增加 **`map`**，避免非 WebSocket 请求仍带 `Connection: upgrade`：
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+```
+
+若暂时不写 `map`，可退化为固定 **`proxy_set_header Connection "upgrade";`**（部分场景下对普通 HTTP 长连接不够严谨，优先用上面的 `map` 写法）。
+
+### 9.2 其它常见原因
+
+| 现象 | 处理 |
+|------|------|
+| 页面是 **HTTPS**，语音仍失败 | 确认浏览器地址栏为 **`https://`**，WebSocket 会走 **`wss://`**；证书需有效 |
+| 经 **Cloudflare** 等 CDN | 在控制台为站点开启 **WebSocket**；部分套餐对长连接有限制 |
+| 仅内网 IP 可访问、域名不可 | 检查安全组、防火墙是否放行 **443**，与 HTTP 一致 |
+| 子路径部署（站点不在域名根路径） | 需保证实际访问的 **路径前缀** 与反代一致，且 **`/api/asr/stream`** 未被其它规则拦截 |
+
+### 9.3 自检
+
+在服务器上若 Node 监听 `127.0.0.1:8787`，可安装 **`wscat`**（`npm i -g wscat`）后执行：
+
+```bash
+wscat -c ws://127.0.0.1:8787/api/asr/stream
+```
+
+若直连 Node 可建立连接而通过域名失败，问题在 **Nginx/CDN** 而非应用代码。
 
 更细的协议与变量说明见 **`docs/asr-voice.md`**。
 
