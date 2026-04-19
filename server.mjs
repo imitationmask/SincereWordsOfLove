@@ -1,8 +1,10 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { WebSocketServer, WebSocket as WsClient } from "ws";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
@@ -13,6 +15,12 @@ const BASE_URL =
   process.env.DASHSCOPE_BASE_URL ||
   "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const MODEL = process.env.DASHSCOPE_MODEL || "qwen-turbo";
+
+/** 百炼实时语音识别 WebSocket（与 Chat 共用 DASHSCOPE_API_KEY），默认北京地域 */
+const ASR_WSS_URL =
+  process.env.DASHSCOPE_ASR_WSS ||
+  "wss://dashscope.aliyuncs.com/api-ws/v1/inference/";
+const ASR_MODEL = process.env.DASHSCOPE_ASR_MODEL || "paraformer-realtime-v2";
 
 /** 每次请求最多带上最近几条对话，避免上下文过长拖慢首字与总耗时 */
 const CHAT_MAX_MESSAGES = (() => {
@@ -152,6 +160,183 @@ async function proxyChatStream(messages, req, res) {
   }
 }
 
+function asrRunTaskMessage(taskId) {
+  return {
+    header: {
+      action: "run-task",
+      task_id: taskId,
+      streaming: "duplex",
+    },
+    payload: {
+      task_group: "audio",
+      task: "asr",
+      function: "recognition",
+      model: ASR_MODEL,
+      parameters: {
+        format: "pcm",
+        sample_rate: 16000,
+      },
+      input: {},
+    },
+  };
+}
+
+function asrFinishTaskMessage(taskId) {
+  return {
+    header: {
+      action: "finish-task",
+      task_id: taskId,
+      streaming: "duplex",
+    },
+    payload: { input: {} },
+  };
+}
+
+function safeSendJson(ws, obj) {
+  if (ws.readyState !== WsClient.OPEN) return;
+  try {
+    ws.send(JSON.stringify(obj));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * 浏览器 WebSocket ↔ 百炼实时语音识别（Paraformer）协议桥接
+ * @param {import("ws").WebSocket} browserWs
+ */
+function attachDashScopeAsrBridge(browserWs) {
+  if (!API_KEY) {
+    safeSendJson(browserWs, {
+      type: "error",
+      message:
+        "服务器未配置 DASHSCOPE_API_KEY，无法使用语音输入。请配置环境变量后重试。",
+    });
+    browserWs.close();
+    return;
+  }
+
+  const taskId = randomUUID();
+  let taskStarted = false;
+  let finished = false;
+
+  const ds = new WsClient(ASR_WSS_URL, {
+    headers: { Authorization: `bearer ${API_KEY}` },
+  });
+
+  const closeAll = () => {
+    if (finished) return;
+    finished = true;
+    try {
+      if (ds.readyState === WsClient.OPEN) ds.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (browserWs.readyState === WsClient.OPEN) browserWs.close();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  ds.on("open", () => {
+    ds.send(JSON.stringify(asrRunTaskMessage(taskId)));
+  });
+
+  ds.on("message", (data) => {
+    let msg;
+    try {
+      msg = JSON.parse(data.toString());
+    } catch {
+      return;
+    }
+    const ev = msg.header?.event;
+    if (ev === "task-started") {
+      taskStarted = true;
+      safeSendJson(browserWs, { type: "ready" });
+      return;
+    }
+    if (ev === "result-generated") {
+      const sentence = msg.payload?.output?.sentence;
+      if (!sentence || sentence.heartbeat) return;
+      safeSendJson(browserWs, {
+        type: "result",
+        text: sentence.text || "",
+        sentenceEnd: sentence.sentence_end === true,
+      });
+      return;
+    }
+    if (ev === "task-finished") {
+      finished = true;
+      safeSendJson(browserWs, { type: "done" });
+      try {
+        browserWs.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        ds.close();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    if (ev === "task-failed") {
+      safeSendJson(browserWs, {
+        type: "error",
+        message: msg.header?.error_message || "语音识别任务失败",
+      });
+      closeAll();
+    }
+  });
+
+  ds.on("error", (err) => {
+    console.error("[api/asr] DashScope WebSocket:", err?.message || err);
+    safeSendJson(browserWs, {
+      type: "error",
+      message: err?.message || "连接语音识别服务失败",
+    });
+    closeAll();
+  });
+
+  ds.on("close", () => {
+    if (!finished) {
+      safeSendJson(browserWs, { type: "done" });
+    }
+    try {
+      if (browserWs.readyState === WsClient.OPEN) browserWs.close();
+    } catch {
+      /* ignore */
+    }
+  });
+
+  browserWs.on("message", (data, isBinary) => {
+    if (!isBinary) return;
+    if (taskStarted && ds.readyState === WsClient.OPEN) {
+      ds.send(data);
+    }
+  });
+
+  browserWs.on("close", () => {
+    if (finished) return;
+    if (ds.readyState === WsClient.OPEN) {
+      try {
+        if (taskStarted) {
+          ds.send(JSON.stringify(asrFinishTaskMessage(taskId)));
+        } else {
+          ds.close();
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
+  browserWs.on("error", (err) => {
+    console.error("[api/asr] browser WebSocket:", err?.message || err);
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
@@ -279,9 +464,23 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
+const wss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, socket, head) => {
+  const u = new URL(req.url || "/", `http://${req.headers.host}`);
+  if (u.pathname === "/api/asr/stream") {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      attachDashScopeAsrBridge(ws);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
 server.listen(PORT, () => {
   console.log(`http://127.0.0.1:${PORT}`);
   if (!API_KEY) {
-    console.warn("警告: 未设置 DASHSCOPE_API_KEY，/api/chat 将不可用。");
+    console.warn(
+      "警告: 未设置 DASHSCOPE_API_KEY，/api/chat 与语音输入将不可用。"
+    );
   }
 });

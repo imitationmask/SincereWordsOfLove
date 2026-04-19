@@ -2,7 +2,221 @@ const logEl = document.getElementById("log");
 const form = document.getElementById("form");
 const input = document.getElementById("input");
 const sendBtn = document.getElementById("send");
+const micBtn = document.getElementById("mic");
 const clearBtn = document.getElementById("clear");
+
+const MAX_INPUT_LEN = 500;
+
+/** 与 /api/chat 并发状态：语音进行中时禁用「生成」，避免状态错乱 */
+let chatInFlight = false;
+
+/** @type {WebSocket | null} */
+let asrWs = null;
+/** @type {MediaStream | null} */
+let asrStream = null;
+/** @type {AudioContext | null} */
+let asrCtx = null;
+/** @type {ScriptProcessorNode | null} */
+let asrProcessor = null;
+
+let voiceBase = "";
+let voiceFinal = "";
+/** 当前未句末的实时片段 */
+let voicePartial = "";
+let isRecognizing = false;
+
+function syncComposerButtons() {
+  sendBtn.disabled = chatInFlight || isRecognizing;
+  if (micBtn) micBtn.disabled = chatInFlight;
+}
+
+function setRequestInFlight(loading) {
+  chatInFlight = loading;
+  syncComposerButtons();
+}
+
+function setMicListeningUi(listening) {
+  if (!micBtn) return;
+  micBtn.classList.toggle("is-listening", listening);
+  micBtn.setAttribute("aria-pressed", listening ? "true" : "false");
+  micBtn.setAttribute(
+    "aria-label",
+    listening
+      ? "正在听取语音，点击结束识别"
+      : "语音输入（百炼 Paraformer），点击开始，再次点击结束"
+  );
+}
+
+function applyVoiceToInput() {
+  const combined = voiceBase + voiceFinal + voicePartial;
+  input.value = combined.slice(0, MAX_INPUT_LEN);
+}
+
+function teardownAsrAudio() {
+  if (asrProcessor) {
+    try {
+      asrProcessor.disconnect();
+    } catch {
+      /* ignore */
+    }
+    asrProcessor.onaudioprocess = null;
+    asrProcessor = null;
+  }
+  if (asrCtx) {
+    asrCtx.close().catch(() => {});
+    asrCtx = null;
+  }
+  if (asrStream) {
+    asrStream.getTracks().forEach((t) => t.stop());
+    asrStream = null;
+  }
+}
+
+function finalizeAsrSession() {
+  teardownAsrAudio();
+  if (asrWs) {
+    try {
+      asrWs.close();
+    } catch {
+      /* ignore */
+    }
+    asrWs = null;
+  }
+  isRecognizing = false;
+  setMicListeningUi(false);
+  syncComposerButtons();
+}
+
+/** 结束识别：停止采集；关闭 WebSocket 后由服务端转发 finish-task */
+function stopVoiceRecognition() {
+  if (!isRecognizing && !asrWs) return;
+  teardownAsrAudio();
+  if (asrWs && asrWs.readyState === WebSocket.OPEN) {
+    try {
+      asrWs.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function asrWebSocketUrl() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${location.host}/api/asr/stream`;
+}
+
+/**
+ * 麦克风 → 重采样为 16kHz s16le PCM → 经本站 WebSocket 转发至百炼 Paraformer
+ * @param {WebSocket} ws
+ */
+async function startMicToAsr(ws) {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    errorLine("无法使用麦克风：请在浏览器设置中允许本站访问麦克风。");
+    ws.close();
+    finalizeAsrSession();
+    return;
+  }
+  asrStream = stream;
+  const ctx = new AudioContext();
+  asrCtx = ctx;
+  const source = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const inRate = ctx.sampleRate;
+  const outRate = 16000;
+  const step = inRate / outRate;
+
+  proc.onaudioprocess = (e) => {
+    if (!asrWs || asrWs.readyState !== WebSocket.OPEN) return;
+    const inputData = e.inputBuffer.getChannelData(0);
+    const outLen = Math.floor(inputData.length / step);
+    const out = new Int16Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const s = inputData[Math.floor(i * step)];
+      const v = Math.max(-32768, Math.min(32767, Math.round(s * 32767)));
+      out[i] = v;
+    }
+    try {
+      asrWs.send(out.buffer);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+  source.connect(proc);
+  proc.connect(gain);
+  gain.connect(ctx.destination);
+  asrProcessor = proc;
+}
+
+function initDashScopeAsrMic() {
+  if (!micBtn) return;
+
+  micBtn.addEventListener("click", () => {
+    if (micBtn.disabled) return;
+
+    if (isRecognizing || asrWs) {
+      stopVoiceRecognition();
+      return;
+    }
+
+    voiceBase = input.value.slice(0, MAX_INPUT_LEN);
+    voiceFinal = "";
+    voicePartial = "";
+    isRecognizing = true;
+    setMicListeningUi(true);
+    syncComposerButtons();
+
+    const ws = new WebSocket(asrWebSocketUrl());
+    asrWs = ws;
+
+    ws.onmessage = (ev) => {
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      if (msg.type === "ready") {
+        startMicToAsr(ws);
+        return;
+      }
+      if (msg.type === "result") {
+        if (msg.sentenceEnd) {
+          voiceFinal += msg.text || "";
+          voicePartial = "";
+        } else {
+          voicePartial = msg.text || "";
+        }
+        applyVoiceToInput();
+        return;
+      }
+      if (msg.type === "done") {
+        finalizeAsrSession();
+        return;
+      }
+      if (msg.type === "error") {
+        errorLine(msg.message || "语音识别失败，请改用键盘输入。");
+        finalizeAsrSession();
+      }
+    };
+
+    ws.onerror = () => {
+      errorLine("语音连接异常，请稍后重试或改用键盘输入。");
+      finalizeAsrSession();
+    };
+
+    ws.onclose = () => {
+      if (asrWs === ws) {
+        finalizeAsrSession();
+      }
+    };
+  });
+}
 
 const HISTORY_STORAGE_KEY = "sincere-words-of-love:chat-history";
 
@@ -63,6 +277,8 @@ function errorLine(msg) {
   logEl.appendChild(el);
   logEl.scrollTop = logEl.scrollHeight;
 }
+
+initDashScopeAsrMic();
 
 function parseSseBlock(block, onDelta) {
   for (const line of block.split("\n")) {
@@ -184,6 +400,7 @@ function typewriterReveal(el, getFull, opts = {}) {
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+  stopVoiceRecognition();
   const text = input.value.trim();
   if (!text) return;
 
@@ -196,7 +413,7 @@ form.addEventListener("submit", async (e) => {
   let fullText = "";
   const tw = typewriterReveal(body, () => fullText, { msPerChar: 20 });
 
-  sendBtn.disabled = true;
+  setRequestInFlight(true);
 
   try {
     const res = await fetch("/api/chat", {
@@ -211,9 +428,9 @@ form.addEventListener("submit", async (e) => {
       const data = await res.json().catch(() => ({}));
       const detail =
         typeof data.detail === "string" ? data.detail.slice(0, 400) : "";
-      throw new Error(
-        data.error || `请求失败（${res.status}）${detail ? `：${detail}` : ""}`
-      );
+      const base =
+        data.error || `请求失败（${res.status}）`;
+      throw new Error(detail ? `${base}：${detail}` : base);
     }
 
     if (!ct.includes("text/event-stream")) {
@@ -249,12 +466,13 @@ form.addEventListener("submit", async (e) => {
     history.pop();
     errorLine(err?.message || "网络或服务异常，请稍后重试。");
   } finally {
-    sendBtn.disabled = false;
+    setRequestInFlight(false);
     input.focus();
   }
 });
 
 clearBtn.addEventListener("click", () => {
+  stopVoiceRecognition();
   history = [];
   logEl.innerHTML = "";
   try {

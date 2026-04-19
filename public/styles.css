@@ -227,6 +227,12 @@ button.ghost {
   box-shadow: none;
 }
 
+button.mic-btn.is-listening {
+  color: var(--rose-deep);
+  border-color: rgba(201, 123, 132, 0.55);
+  box-shadow: 0 0 0 3px rgba(232, 180, 184, 0.35);
+}
+
 .foot {
   margin-top: 28px;
   text-align: center;
