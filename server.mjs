@@ -14,6 +14,18 @@ const BASE_URL =
   "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const MODEL = process.env.DASHSCOPE_MODEL || "qwen-turbo";
 
+/** 每次请求最多带上最近几条对话，避免上下文过长拖慢首字与总耗时 */
+const CHAT_MAX_MESSAGES = (() => {
+  const n = Number(process.env.CHAT_MAX_MESSAGES);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 12;
+})();
+
+/** 输出约 50 汉字以内，128 token 足够；可按需调低以略减生成长度 */
+const DASHSCOPE_MAX_TOKENS = (() => {
+  const n = Number(process.env.DASHSCOPE_MAX_TOKENS);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 128;
+})();
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -48,14 +60,24 @@ const SYSTEM_PROMPT = `你是「爱的真心话」助手。用户会输入父母
 3. 语气柔和、体谅孩子，不啰嗦、不说教堆砌。
 4. 不要出现「AI」「模型」「作为助手」等套话。`;
 
+function trimChatMessages(messages) {
+  if (messages.length <= CHAT_MAX_MESSAGES) return messages;
+  return messages.slice(-CHAT_MAX_MESSAGES);
+}
+
 function chatPayload(messages, { stream }) {
-  return {
+  const payload = {
     model: MODEL,
     temperature: 0.6,
-    max_tokens: 256,
+    max_tokens: DASHSCOPE_MAX_TOKENS,
     stream,
     messages: [{ role: "system", content: SYSTEM_PROMPT }, ...messages],
   };
+  /** Qwen3 系若默认开启 thinking，会明显增加耗时；其它模型不传该字段以免兼容接口报错 */
+  if (/qwen3|qwq/i.test(MODEL)) {
+    payload.enable_thinking = false;
+  }
+  return payload;
 }
 
 async function proxyChat(messages) {
@@ -159,6 +181,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    let tChat0;
     try {
       const raw = await readBody(req);
       const body = JSON.parse(raw || "{}");
@@ -176,10 +199,20 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      const messagesForApi = trimChatMessages(messages);
+
+      tChat0 = performance.now();
+
       if (body.stream === true) {
         try {
-          await proxyChatStream(messages, req, res);
+          await proxyChatStream(messagesForApi, req, res);
+          console.log(
+            `[api/chat] stream completed in ${(performance.now() - tChat0).toFixed(1)}ms`
+          );
         } catch (e) {
+          console.log(
+            `[api/chat] stream failed in ${(performance.now() - tChat0).toFixed(1)}ms`
+          );
           if (res.headersSent) return;
           const detail = e?.detail || e?.message || String(e);
           send(
@@ -195,7 +228,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const content = await proxyChat(messages);
+      const content = await proxyChat(messagesForApi);
       send(
         res,
         200,
@@ -204,6 +237,9 @@ const server = http.createServer(async (req, res) => {
           "Content-Type": "application/json; charset=utf-8",
           "Access-Control-Allow-Origin": "*",
         }
+      );
+      console.log(
+        `[api/chat] completed in ${(performance.now() - tChat0).toFixed(1)}ms`
       );
     } catch (e) {
       const detail = e?.detail || e?.message || String(e);
@@ -216,6 +252,11 @@ const server = http.createServer(async (req, res) => {
           "Access-Control-Allow-Origin": "*",
         }
       );
+      if (tChat0 !== undefined) {
+        console.log(
+          `[api/chat] completed with error in ${(performance.now() - tChat0).toFixed(1)}ms`
+        );
+      }
     }
     return;
   }

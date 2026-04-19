@@ -266,3 +266,97 @@ clearBtn.addEventListener("click", () => {
 });
 
 restoreHistoryToUi();
+
+const FLOAT_DECOR_SIZE = 30;
+
+function layoutFloatingDecor() {
+  const root = document.getElementById("heart-decor");
+  if (!root) return;
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  function expandRect(r, pad) {
+    return {
+      left: r.left - pad,
+      top: r.top - pad,
+      right: r.right + pad,
+      bottom: r.bottom + pad,
+    };
+  }
+
+  function intersects(a, b) {
+    return !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+  }
+
+  function buildZones(strict) {
+    const pad = strict ? 22 : 32;
+    const selectors = strict ? [".hero", ".chat", ".foot"] : [".chat"];
+    return selectors
+      .map((s) => document.querySelector(s))
+      .filter(Boolean)
+      .map((el) => expandRect(el.getBoundingClientRect(), pad));
+  }
+
+  function placeBatch(strict) {
+    root.replaceChildren();
+    const zones = buildZones(strict);
+    if (!zones.length) return 0;
+
+    const targetCount = Math.min(
+      28,
+      Math.max(8, Math.floor((vw * vh) / 26000))
+    );
+
+    const rot = () => Math.random() * 40 - 20;
+
+    let placed = 0;
+    outer: for (let i = 0; i < targetCount; i++) {
+      for (let attempt = 0; attempt < 72; attempt++) {
+        const x = Math.random() * Math.max(1, vw - FLOAT_DECOR_SIZE);
+        const y = Math.random() * Math.max(1, vh - FLOAT_DECOR_SIZE);
+        const box = {
+          left: x,
+          top: y,
+          right: x + FLOAT_DECOR_SIZE,
+          bottom: y + FLOAT_DECOR_SIZE,
+        };
+        if (!zones.some((z) => intersects(box, z))) {
+          const img = document.createElement("img");
+          img.src = "/balloon.svg";
+          img.alt = "";
+          img.width = FLOAT_DECOR_SIZE;
+          img.height = FLOAT_DECOR_SIZE;
+          img.style.left = `${x}px`;
+          img.style.top = `${y}px`;
+          img.style.transform = `rotate(${rot()}deg)`;
+          img.decoding = "async";
+          root.appendChild(img);
+          placed++;
+          continue outer;
+        }
+      }
+    }
+    return placed;
+  }
+
+  const placedStrict = placeBatch(true);
+  if (placedStrict < 6) {
+    root.dataset.mode = "relaxed";
+    placeBatch(false);
+    document.body.classList.add("hearts-near-hero");
+  } else {
+    root.dataset.mode = "strict";
+    document.body.classList.remove("hearts-near-hero");
+  }
+}
+
+let heartLayoutTimer;
+window.addEventListener("resize", () => {
+  window.clearTimeout(heartLayoutTimer);
+  heartLayoutTimer = window.setTimeout(() => layoutFloatingDecor(), 180);
+});
+
+requestAnimationFrame(() => {
+  layoutFloatingDecor();
+});

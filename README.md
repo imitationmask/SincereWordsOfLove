@@ -31,8 +31,12 @@ npm start
 |------|------|------|
 | `DASHSCOPE_API_KEY` | 通义千问 API 密钥（必填） | 无 |
 | `DASHSCOPE_BASE_URL` | 兼容 OpenAI 的 Chat 接口根 URL | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| `DASHSCOPE_MODEL` | 模型名 | `qwen-turbo` |
+| `DASHSCOPE_MODEL` | 模型名（追求速度可用 `qwen-turbo`、`qwen3.5-flash` 等） | `qwen-turbo` |
+| `DASHSCOPE_MAX_TOKENS` | 单次生成上限（本应用输出很短，可保持较小以略减耗时） | `128` |
+| `CHAT_MAX_MESSAGES` | 每次请求只带最近几条对话，避免会话过长拖慢接口 | `12` |
 | `PORT` | 本地 HTTP 端口 | `8787` |
+
+**若 `/api/chat` 很慢（例如数十秒）**：多半是上游模型与网络延迟。请确认 Key 与 `DASHSCOPE_BASE_URL` 区域一致；选用 Flash / Turbo 等轻量模型；对话轮数多时可依赖 `CHAT_MAX_MESSAGES` 截断上下文；海外访问国内 endpoint 可能明显变慢。
 
 国内与北京区域一般使用默认 `BASE_URL`；**国际或其他区域**请按[阿里云 Model Studio 文档](https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope)将 `DASHSCOPE_BASE_URL` 改为对应兼容接口地址，并确保 Key 与区域一致。
 

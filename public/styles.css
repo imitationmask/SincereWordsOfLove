@@ -31,7 +31,8 @@ body {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background: radial-gradient(
+  background-image: url("/hearts-bg.svg"),
+    radial-gradient(
       1200px 600px at 10% -10%,
       rgba(232, 180, 184, 0.45),
       transparent 60%
@@ -42,9 +43,43 @@ body {
       transparent 55%
     ),
     linear-gradient(180deg, #fff8f3, #fdeee8);
+  background-size: 120px 120px, auto, auto, auto;
+  background-repeat: repeat, no-repeat, no-repeat, no-repeat;
+  background-position: 0 0, center, center, center;
+}
+
+.heart-decor {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.heart-decor img {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  opacity: 0.5;
+  will-change: transform;
+}
+
+.heart-decor[data-mode="relaxed"] img {
+  opacity: 0.32;
+}
+
+/* 窄屏宽松落点时，标题区可能靠近装饰心形 */
+body.hearts-near-hero .hero h1,
+body.hearts-near-hero .hero .lede {
+  text-shadow:
+    0 0 14px rgba(255, 248, 243, 0.95),
+    0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
 .shell {
+  position: relative;
+  z-index: 1;
   max-width: 720px;
   margin: 0 auto;
   padding: 48px 20px 64px;

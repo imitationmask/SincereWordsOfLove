@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 512 512" role="img" aria-label="3D soft blue heart">
+  <defs>
+    <linearGradient id="heartFace" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#b8dcff"/>
+      <stop offset="45%" stop-color="#90c9ff"/>
+      <stop offset="100%" stop-color="#7ab8f5"/>
+    </linearGradient>
+    <linearGradient id="heartSide" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#8ec4ff"/>
+      <stop offset="100%" stop-color="#79b6ff"/>
+    </linearGradient>
+    <radialGradient id="lobeHL" cx="35%" cy="28%" r="45%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="50%" stop-color="#c8e6ff" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#90c9ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="lobeHR" cx="72%" cy="26%" r="42%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="55%" stop-color="#b8dcff" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#90c9ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="castShadow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="-10" dy="18" stdDeviation="14" flood-color="#b898a0" flood-opacity="0.38"/>
+    </filter>
+    <filter id="softBlur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.2"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#castShadow)">
+    <path
+      fill="url(#heartSide)"
+      transform="translate(-16, 10) rotate(-4 256 256)"
+      d="M256 428
+         C128 312 52 228 52 152
+         C52 64 118 20 196 72
+         C228 94 256 132 256 132
+         C256 132 284 94 316 72
+         C394 20 460 64 460 152
+         C460 228 384 312 256 428Z"/>
+    <path
+      fill="url(#heartFace)"
+      d="M256 428
+         C128 312 52 228 52 152
+         C52 64 118 20 196 72
+         C228 94 256 132 256 132
+         C256 132 284 94 316 72
+         C394 20 460 64 460 152
+         C460 228 384 312 256 428Z"/>
+  </g>
+
+  <path
+    fill="url(#lobeHL)"
+    d="M256 428
+       C128 312 52 228 52 152
+       C52 64 118 20 196 72
+       C228 94 256 132 256 132
+       C256 132 284 94 316 72
+       C394 20 460 64 460 152
+       C460 228 384 312 256 428Z"/>
+  <path
+    fill="url(#lobeHR)"
+    d="M256 428
+       C128 312 52 228 52 152
+       C52 64 118 20 196 72
+       C228 94 256 132 256 132
+       C256 132 284 94 316 72
+       C394 20 460 64 460 152
+       C460 228 384 312 256 428Z"/>
+
+  <path
+    fill="none"
+    stroke="#eef7ff"
+    stroke-width="5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.95"
+    filter="url(#softBlur)"
+    d="M318 88
+       C380 120 408 168 392 240
+       C378 298 330 352 268 400"/>
+</svg>
